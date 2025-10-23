@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Descargador de Contenido — Corregido</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .loader {
+            border: 4px solid rgba(255,255,255,0.12);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 24px; height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex items-center justify-center min-h-screen p-4">
+
+    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <h1 class="text-3xl font-bold text-center mb-6 text-blue-400">Mi Aplicación de Descarga</h1>
+
+        <div class="space-y-4">
+            <div>
+                <label for="url-input" class="block text-sm font-medium text-gray-300 mb-2">URL del Contenido:</label>
+                <input
+                    type="url"
+                    id="url-input"
+                    placeholder="Pega la URL aquí..."
+                    class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                    aria-label="URL del contenido"
+                >
+            </div>
+
+            <button
+                id="download-btn"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-lg shadow-lg transition-colors duration-300 ease-in-out flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                <div id="spinner" class="loader hidden" aria-hidden="true"></div>
+                <span id="btn-text">Procesar Enlace</span>
+            </button>
+        </div>
+
+        <div id="error-message" class="mt-4 text-red-400 text-center font-medium" role="status" aria-live="polite"></div>
+
+        <div id="results-container" class="mt-6 hidden">
+            <h2 class="text-lg font-semibold text-gray-200">Resultado:</h2>
+            <div class="bg-gray-700 p-4 rounded-lg mt-2 space-y-3">
+                <p><strong>Título:</strong> <span id="result-title" class="text-gray-300"></span></p>
+                <p><strong>Formato:</strong> <span id="result-format" class="bg-green-600 text-white text-xs font-mono px-2 py-0.5 rounded-full"></span></p>
+                <a id="result-download-link" href="#" target="_blank" rel="noopener noreferrer" class="block w-full text-center bg-green-500 hover:bg-green-600 text-white font-bold p-3 rounded-lg transition-colors" download>
+                    Descargar Archivo
+                </a>
+            </div>
+        </div>
+
+        <footer class="text-center text-gray-500 text-xs mt-8">Creado por LIU-OFC</footer>
+    </div>
+
+    <script>
+        // Elementos DOM
+        const urlInput = document.getElementById('url-input');
+        const downloadBtn = document.getElementById('download-btn');
+        const btnText = document.getElementById('btn-text');
+        const spinner = document.getElementById('spinner');
+        const errorMessage = document.getElementById('error-message');
+        const resultsContainer = document.getElementById('results-container');
+        const resultTitle = document.getElementById('result-title');
+        const resultFormat = document.getElementById('result-format');
+        const resultDownloadLink = document.getElementById('result-download-link');
+
+        // Tu API key (la proporcionaste en la conversación)
+        const apiKey = 'liu_ofc';
+
+        // Activar con click y con Enter
+        downloadBtn.addEventListener('click', handleDownload);
+        urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleDownload(); });
+
+        // Validador básico de URL
+        function isValidUrl(value) {
+            try {
+                const u = new URL(value);
+                return u.protocol === 'http:' || u.protocol === 'https:';
+            } catch (e) { return false; }
+        }
+
+        async function handleDownload() {
+            const rawUrl = (urlInput.value || '').trim();
+            clearMessages();
+
+            if (!rawUrl) {
+                showError('Por favor, ingresa una URL.');
+                return;
+            }
+
+            // Si el usuario pegó un enlace sin esquema, asumir https://
+            const urlWithScheme = rawUrl.match(/^https?:\/\//i) ? rawUrl : `https://${rawUrl}`;
+            if (!isValidUrl(urlWithScheme)) {
+                showError('La URL ingresada no es válida.');
+                return;
+            }
+
+            // Construir URL de la API correctamente (evitar doble '?')
+            const apiUrl = `https://api.sylphy.xyz/download/ytmp3v2?url=${encodeURIComponent(urlWithScheme)}&apikey=${encodeURIComponent(apiKey)}`;
+
+            // Tiempo de espera (AbortController)
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+
+            setLoading(true);
+
+            try {
+                const response = await fetch(apiUrl, { signal: controller.signal });
+
+                // Manejar errores HTTP
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} - ${response.statusText}`);
+                }
+
+                const json = await response.json();
+
+                // Validar estructura esperada
+                if (!json || typeof json !== 'object') {
+                    throw new Error('Respuesta inválida del servidor.');
+                }
+
+                if (json.status && json.data) {
+                    // Asegurarnos que exista dl_url
+                    const { title = 'descarga', dl_url, format = '' } = json.data;
+                    if (!dl_url) {
+                        throw new Error('La respuesta no contiene un enlace de descarga (dl_url).');
+                    }
+
+                    displayResults({ title, dl_url, format });
+                } else {
+                    // Mensaje de error provisto por la API
+                    const msg = json.message || 'La API devolvió un estado de error.';
+                    throw new Error(msg);
+                }
+
+            } catch (err) {
+                console.error('Error al descargar:', err);
+
+                if (err.name === 'AbortError') {
+                    showError('La solicitud tomó demasiado tiempo y fue abortada. Intenta de nuevo.');
+                } else if (err.message && err.message.includes('Failed to fetch')) {
+                    // Esto suele indicar un problema de CORS o de red
+                    showError('No se pudo contactar con la API. Puede ser un bloqueo por CORS o un problema de red.');
+                } else {
+                    showError(err.message || 'Ocurrió un error inesperado.');
+                }
+
+            } finally {
+                clearTimeout(timeoutId);
+                setLoading(false);
+            }
+        }
+
+        function setLoading(isLoading) {
+            downloadBtn.disabled = isLoading;
+            if (isLoading) {
+                spinner.classList.remove('hidden');
+                spinner.setAttribute('aria-hidden', 'false');
+                btnText.textContent = 'Procesando...';
+            } else {
+                spinner.classList.add('hidden');
+                spinner.setAttribute('aria-hidden', 'true');
+                btnText.textContent = 'Procesar Enlace';
+            }
+        }
+
+        function displayResults(data) {
+            resultTitle.textContent = data.title;
+            resultFormat.textContent = (data.format || '').toUpperCase();
+            resultDownloadLink.href = data.dl_url;
+
+            // Intentar setear atributo download (nota: los navegadores lo ignoran para enlaces cross-origin)
+            try {
+                const safeFilename = `${data.title.replace(/[^a-z0-9\-_. ]/gi, '')}.${(data.format || 'bin').replace(/[^a-z0-9]/gi, '')}`;
+                resultDownloadLink.setAttribute('download', safeFilename);
+            } catch (e) { /* ignorar */ }
+
+            resultsContainer.classList.remove('hidden');
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            resultsContainer.classList.add('hidden');
+        }
+
+        function clearMessages() {
+            errorMessage.textContent = '';
+            resultsContainer.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
